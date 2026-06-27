@@ -126,11 +126,24 @@ export async function importFirst(urls) {
   throw lastErr || new Error('All module sources failed to load.');
 }
 
+/** Pull image files out of a clipboard/drag event's data. */
+export function imageFilesFrom(items) {
+  const files = [];
+  for (const it of items || []) {
+    if (it.kind === 'file' && it.type && it.type.startsWith('image/')) {
+      const f = it.getAsFile();
+      if (f) files.push(f);
+    }
+  }
+  return files;
+}
+
 /**
- * Wire a drop zone + hidden file input + clipboard paste to a callback.
+ * Wire a drop zone + hidden file input to a callback. Clipboard paste is
+ * handled centrally by the app (see app.js) so it can route to the active tab.
  * Returns a function to programmatically open the file picker.
  */
-export function setupImageInput(dropZone, input, onFiles, { paste = true } = {}) {
+export function setupImageInput(dropZone, input, onFiles) {
   const handleFiles = (fileList) => {
     const files = Array.from(fileList || []).filter((f) => f.type.startsWith('image/'));
     if (files.length) onFiles(files);
@@ -159,24 +172,6 @@ export function setupImageInput(dropZone, input, onFiles, { paste = true } = {})
       })
     );
     dropZone.addEventListener('drop', (e) => handleFiles(e.dataTransfer?.files));
-  }
-
-  if (paste) {
-    window.addEventListener('paste', (e) => {
-      const items = e.clipboardData?.items;
-      if (!items) return;
-      const files = [];
-      for (const it of items) {
-        if (it.kind === 'file' && it.type.startsWith('image/')) {
-          const f = it.getAsFile();
-          if (f) files.push(f);
-        }
-      }
-      if (files.length) {
-        e.preventDefault();
-        onFiles(files);
-      }
-    });
   }
 
   return () => input.click();

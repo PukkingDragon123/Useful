@@ -71,8 +71,13 @@ export async function shareOrDownload(blob, filename, type) {
         await navigator.share({ files: [file], title: filename });
         return 'shared';
       } catch (err) {
-        if (err && err.name === 'AbortError') return 'cancelled';
-        // otherwise fall through to download
+        // The user dismissing the share sheet surfaces as AbortError, or as
+        // NotAllowedError on some iOS versions. Treat both as a cancel rather
+        // than silently downloading and falsely reporting success.
+        if (err && (err.name === 'AbortError' || err.name === 'NotAllowedError')) {
+          return 'cancelled';
+        }
+        // any other error: fall through to the download path
       }
     }
   }

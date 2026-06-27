@@ -1,6 +1,6 @@
 // app.js — main controller for Pukking's Useful Tools.
 import { $, $$, el, toast, blobToImage, imageToCanvas, canvasToBlob, isCanvasTainted,
-  formatBytes, debounce, pad, setupImageInput } from './util.js';
+  formatBytes, debounce, pad, setupImageInput, imageFilesFrom } from './util.js';
 import * as SPL from './splitter.js';
 import { removeBackground, MODELS, hasWebGPU, isCrossOriginIsolated } from './bgremove.js';
 import { saveAll, buildZip, downloadBlob } from './exporter.js';
@@ -56,17 +56,25 @@ function activateTab(name) {
 $$('.tab').forEach((t) => t.addEventListener('click', () => activateTab(t.dataset.tab)));
 
 // ================================================================ SPLITTER ==
+const MAX_SPRITES = 500; // safety cap on extracted sprites
+
 const SP = {
   src: null,        // full-res working canvas
   base: null,       // original (pre-bg-removal) canvas, for reset
   imgData: null,    // cached { data, W, H }
+  rawCache: null,   // cached connected-component labelling { key, boxes }
   mode: 'auto',
   gridInput: 'count',
   boxes: [],
-  results: [],      // [{ canvas, blob, name, bgRemoved, selected }]
+  results: [],      // [{ canvas, blob, name, box, bgRemoved, selected }]
   version: 0,
   zip: { sig: null, blob: null },
 };
+
+function resetSplitterCaches() {
+  SP.imgData = null;
+  SP.rawCache = null;
+}
 
 const spPreview = $('#splitter-preview');
 const spDims = $('#splitter-dims');
@@ -98,20 +106,31 @@ function ensureImageData() {
   return SP.imgData;
 }
 
+// The expensive part of auto-detect (mask + connected-component labelling)
+// depends only on the threshold and connectivity. minArea / merge are cheap
+// post-filters, so we cache the raw labelled boxes and only relabel when the
+// threshold, connectivity, or source image changes.
+function computeRawBoxes(c) {
+  const key = `${c.threshold}|${c.diag}`;
+  if (SP.rawCache && SP.rawCache.key === key) return SP.rawCache.boxes;
+  const { data, W, H } = ensureImageData();
+  const bg = SPL.detectBackgroundColor(data, W, H);
+  const mask = SPL.buildMask(data, W, H, { threshold: c.threshold, bg });
+  const boxes = SPL.detectBoxes(mask, W, H, { eightConn: c.diag, minArea: 1 });
+  SP.rawCache = { key, boxes };
+  return boxes;
+}
+
 function computeBoxes() {
   const c = readControls();
   const W = SP.src.width, H = SP.src.height;
   if (SP.mode === 'grid') {
-    const boxes = c.gridInput === 'count'
+    return c.gridInput === 'count'
       ? SPL.gridBoxesByCount(W, H, c)
       : SPL.gridBoxesBySize(W, H, c);
-    return boxes;
   }
-  // auto
-  const { data } = ensureImageData();
-  const bg = SPL.detectBackgroundColor(data, W, H);
-  const mask = SPL.buildMask(data, W, H, { threshold: c.threshold, bg });
-  let boxes = SPL.detectBoxes(mask, W, H, { eightConn: c.diag, minArea: c.minArea });
+  // auto: filter the cached raw labelling (cheap), then merge + sort.
+  let boxes = computeRawBoxes(c).filter((b) => b.area >= c.minArea);
   if (c.merge > 0) boxes = SPL.mergeBoxes(boxes, c.merge);
   return SPL.sortReadingOrder(boxes);
 }
@@ -149,51 +168,60 @@ const refreshDetection = debounce(() => {
   }
   spCount.textContent = `${SP.boxes.length} sprite${SP.boxes.length === 1 ? '' : 's'}`;
   drawPreview();
-}, 140);
+}, 200);
 
-async function buildResults() {
+const boxKey = (b) => `${b.x},${b.y},${b.w},${b.h}`;
+
+function buildResults() {
   if (!SP.src || !SP.boxes.length) {
     SP.results = [];
+    SP.version++;
     renderResults();
     return;
   }
-  if (SP.boxes.length > 600) {
-    toast(`${SP.boxes.length} regions — that’s a lot. Try raising "ignore specks" or use Grid mode.`, 'warn', 5000);
+  let boxes = SP.boxes;
+  if (boxes.length > MAX_SPRITES) {
+    toast(`Found ${boxes.length} regions — showing the first ${MAX_SPRITES}. Raise "ignore specks" or use Grid mode.`, 'warn', 5500);
+    boxes = boxes.slice(0, MAX_SPRITES);
   }
   const c = readControls();
   // uniform target = largest box (after potential trim we just use raw box size)
   let uniform = null;
   if (c.uniform) {
     let mw = 0, mh = 0;
-    for (const b of SP.boxes) { mw = Math.max(mw, b.w); mh = Math.max(mh, b.h); }
+    for (const b of boxes) { mw = Math.max(mw, b.w); mh = Math.max(mh, b.h); }
     uniform = { w: mw + c.pad * 2, h: mh + c.pad * 2 };
   }
-  const prevSelected = new Map(SP.results.map((r, i) => [i, r.selected]));
+  // Preserve prior selection keyed by stable box geometry (not positional
+  // index, which drifts as detection changes).
+  const prevSelected = new Map(SP.results.map((r) => [boxKey(r.box), r.selected]));
   const results = [];
-  SP.boxes.forEach((box, i) => {
+  boxes.forEach((box) => {
     const canvas = SPL.extractCanvas(SP.src, box, {
       trim: c.trim, pad: c.pad, threshold: c.threshold,
       uniform: c.uniform ? uniform : null,
     });
     if (!canvas) return;
+    const key = boxKey(box);
     results.push({
       canvas,
       blob: null,
+      box: { x: box.x, y: box.y, w: box.w, h: box.h },
       name: `sprite-${pad(results.length + 1)}.png`,
       bgRemoved: false,
-      selected: prevSelected.has(i) ? prevSelected.get(i) : true,
+      selected: prevSelected.has(key) ? prevSelected.get(key) : true,
     });
   });
   SP.results = results;
   SP.version++;
   renderResults();
-  // produce blobs in the background for export
-  await materializeBlobs();
+  // Blobs are encoded lazily (on export / pre-zip), not eagerly here.
   scheduleZip();
 }
 
-async function materializeBlobs() {
-  await Promise.all(SP.results.map(async (r) => {
+// Encode PNG blobs for the given results only (those that don't have one yet).
+async function materializeBlobs(list) {
+  await Promise.all(list.map(async (r) => {
     if (!r.blob) r.blob = await canvasToBlob(r.canvas, 'image/png');
   }));
 }
@@ -203,14 +231,16 @@ function selectionSig() {
 }
 
 const scheduleZip = debounce(async () => {
-  const items = SP.results.filter((r) => r.selected).map((r) => ({ name: r.name, blob: r.blob }));
-  if (items.length < 2 || items.some((it) => !it.blob)) { SP.zip = { sig: null, blob: null }; return; }
+  const sel = SP.results.filter((r) => r.selected);
+  if (sel.length < 2) { SP.zip = { sig: null, blob: null }; return; }
   const sig = selectionSig();
   try {
-    const blob = await buildZip(items);
+    await materializeBlobs(sel);
+    if (selectionSig() !== sig) return; // selection changed mid-build; next run handles it
+    const blob = await buildZip(sel.map((r) => ({ name: r.name, blob: r.blob })));
     SP.zip = { sig, blob };
   } catch (err) { SP.zip = { sig: null, blob: null }; }
-}, 400);
+}, 450);
 
 function updateResultsCount() {
   const n = SP.results.filter((r) => r.selected).length;
@@ -279,7 +309,7 @@ async function removeOneBg(r, card) {
 function loadIntoSplitter(canvas) {
   SP.src = canvas;
   SP.base = canvas;
-  SP.imgData = null;
+  resetSplitterCaches();
   SP.results = [];
   SP.zip = { sig: null, blob: null };
   $('#splitter-bg-status').hidden = true;
@@ -310,20 +340,25 @@ $('#splitter-change').addEventListener('click', () => {
   $('#splitter-workspace').hidden = true;
   $('#splitter-results').hidden = true;
   $('#splitter-intro').hidden = false;
-  SP.src = null; SP.base = null; SP.imgData = null; SP.results = [];
+  SP.src = null; SP.base = null; SP.results = [];
+  resetSplitterCaches();
 });
 $('#splitter-demo').addEventListener('click', () => {
-  loadIntoSplitter(makeDemoSheet());
+  setSplitterMode('auto'); // the demo showcases Auto-Detect
   $('#ctl-merge').value = 0; $('#out-merge').textContent = '0';
+  loadIntoSplitter(makeDemoSheet());
   toast('Loaded a demo sprite sheet — Auto-Detect found the shapes!', 'good');
 });
 
 // mode toggle
+function setSplitterMode(mode) {
+  SP.mode = mode;
+  $$('.seg__btn[data-mode]').forEach((b) => b.classList.toggle('is-active', b.dataset.mode === mode));
+  $('.control-group[data-for="auto"]').hidden = mode !== 'auto';
+  $('.control-group[data-for="grid"]').hidden = mode !== 'grid';
+}
 $$('.seg__btn[data-mode]').forEach((btn) => btn.addEventListener('click', () => {
-  $$('.seg__btn[data-mode]').forEach((b) => b.classList.toggle('is-active', b === btn));
-  SP.mode = btn.dataset.mode;
-  $('.control-group[data-for="auto"]').hidden = SP.mode !== 'auto';
-  $('.control-group[data-for="grid"]').hidden = SP.mode !== 'grid';
+  setSplitterMode(btn.dataset.mode);
   refreshDetection();
   setTimeout(buildResults, 160);
 }));
@@ -384,7 +419,7 @@ $('#splitter-removebg').addEventListener('click', async () => {
     const out = await removeBackground(blob, { model: currentModel(), onProgress: bgProgress('Sheet'), onStatus: setOverlayProgress });
     const img = await blobToImage(out);
     SP.src = imageToCanvas(img);
-    SP.imgData = null;
+    resetSplitterCaches();
     $('#splitter-removebg').disabled = true;
     statusEl.hidden = false; statusEl.className = 'status status--good';
     statusEl.textContent = '✓ Background removed — detection now uses clean transparency.';
@@ -431,14 +466,12 @@ $('#results-save').addEventListener('click', async () => {
   const items = SP.results.filter((r) => r.selected);
   if (!items.length) { toast('Nothing selected to save.', 'warn'); return; }
   try {
-    await materializeBlobs();
-    const payload = items.map((r) => ({ name: r.name, blob: r.blob }));
     const useCache = SP.zip.sig === selectionSig() ? SP.zip.blob : null;
-    if (!useCache && payload.length > 1) showOverlay('Packaging your images…');
+    if (!useCache) { showOverlay('Packaging your images…'); await materializeBlobs(items); }
+    const payload = items.map((r) => ({ name: r.name, blob: r.blob }));
     const result = await saveAll(payload, { zipName: 'pukking-sprites.zip', zipBlob: useCache });
     hideOverlay();
-    if (result === 'downloaded') toast('Saved! Check your downloads / Files.', 'good');
-    else if (result === 'shared') toast('Shared — choose "Save to Files".', 'good');
+    notifySave(result);
   } catch (err) {
     hideOverlay();
     console.error(err);
@@ -446,8 +479,33 @@ $('#results-save').addEventListener('click', async () => {
   }
 });
 
+// Consistent, honest save feedback (no false "Saved!" on cancel).
+function notifySave(result) {
+  if (result === 'shared') toast('Shared — choose "Save to Files".', 'good');
+  else if (result === 'downloaded') toast('Saved! Check your downloads / Files.', 'good');
+  // 'cancelled' -> stay quiet
+}
+
 // ============================================================== BG REMOVER ==
-const BG = { items: [] }; // [{ srcCanvas, srcBlob, name, resultBlob, resultCanvas, status }]
+const BG = { items: [], zip: { sig: null, blob: null } }; // items: [{ srcCanvas, srcBlob, name, resultBlob, resultCanvas, status }]
+
+function bgExportItems() {
+  return BG.items.filter((it) => it.resultBlob).map((it) => ({ name: it.name, blob: it.resultBlob }));
+}
+function bgSig() {
+  return bgExportItems().map((i) => `${i.name}:${i.blob.size}`).join('|');
+}
+// Pre-build the cutouts ZIP after processing so the iOS share gesture stays
+// intact at save time (mirrors the splitter's scheduleZip).
+const scheduleBgZip = debounce(async () => {
+  const items = bgExportItems();
+  if (items.length < 2) { BG.zip = { sig: null, blob: null }; return; }
+  const sig = bgSig();
+  try {
+    const blob = await buildZip(items);
+    BG.zip = { sig, blob };
+  } catch { BG.zip = { sig: null, blob: null }; }
+}, 450);
 
 function renderBg() {
   const wrap = $('#bg-results');
@@ -496,6 +554,7 @@ async function runBgOne(i) {
     const img = await blobToImage(out);
     it.resultBlob = out; it.resultCanvas = imageToCanvas(img); it.status = 'done';
     renderBg();
+    scheduleBgZip();
     toast('Background removed.', 'good');
   } catch (err) {
     console.error(err); it.status = 'failed';
@@ -510,9 +569,9 @@ async function saveBgOne(i) {
   downloadBlob(it.resultBlob, it.name);
 }
 
-setupImageInput($('#bg-drop'), $('#bg-file'), addBgImages, { paste: false });
+setupImageInput($('#bg-drop'), $('#bg-file'), addBgImages);
 $('#bg-upload').addEventListener('click', () => $('#bg-file').click());
-$('#bg-clear').addEventListener('click', () => { BG.items = []; renderBg(); });
+$('#bg-clear').addEventListener('click', () => { BG.items = []; BG.zip = { sig: null, blob: null }; renderBg(); });
 $('#bg-runall').addEventListener('click', async () => {
   const todo = BG.items.filter((it) => !it.resultBlob);
   if (!todo.length) { toast('Everything is already done.', 'info'); return; }
@@ -530,16 +589,18 @@ $('#bg-runall').addEventListener('click', async () => {
     renderBg();
   }
   hideOverlay();
+  scheduleBgZip();
   toast('Done removing backgrounds.', 'good');
 });
 $('#bg-save').addEventListener('click', async () => {
-  const items = BG.items.filter((it) => it.resultBlob).map((it) => ({ name: it.name, blob: it.resultBlob }));
+  const items = bgExportItems();
   if (!items.length) { toast('Remove some backgrounds first.', 'warn'); return; }
   try {
-    if (items.length > 1) showOverlay('Packaging your images…');
-    const result = await saveAll(items, { zipName: 'pukking-cutouts.zip' });
+    const useCache = BG.zip.sig === bgSig() ? BG.zip.blob : null;
+    if (!useCache && items.length > 1) showOverlay('Packaging your images…');
+    const result = await saveAll(items, { zipName: 'pukking-cutouts.zip', zipBlob: useCache });
     hideOverlay();
-    toast(result === 'shared' ? 'Shared — choose "Save to Files".' : 'Saved! Check your downloads / Files.', 'good');
+    notifySave(result);
   } catch (err) { hideOverlay(); toast(err.message || 'Save failed.', 'error', 5000); }
 });
 
@@ -595,7 +656,7 @@ async function pinFromFile(file) {
   } catch { toast('Couldn’t open that image.', 'error'); }
 }
 
-setupImageInput($('#pin-drop'), $('#pin-file'), (files) => pinFromFile(files[0]), { paste: false });
+setupImageInput($('#pin-drop'), $('#pin-file'), (files) => pinFromFile(files[0]));
 $('#pin-load').addEventListener('click', async () => {
   const url = $('#pin-url').value.trim();
   if (!url) { toast('Paste an image URL first.', 'warn'); return; }
@@ -636,5 +697,17 @@ function init() {
   coi.textContent = isCrossOriginIsolated()
     ? '⚡ Accelerated mode active.'
     : 'Tip: background removal runs faster on a host with cross-origin isolation.';
+
+  // Central clipboard-paste dispatcher: route a pasted image to the ACTIVE
+  // tab's flow instead of always hijacking it into the Splitter.
+  window.addEventListener('paste', (e) => {
+    const files = imageFilesFrom(e.clipboardData?.items);
+    if (!files.length) return;
+    e.preventDefault();
+    const active = document.querySelector('.tab.is-active')?.dataset.tab;
+    if (active === 'bg') addBgImages(files);
+    else if (active === 'pin') pinFromFile(files[0]);
+    else loadSplitterFromBlob(files[0]);
+  });
 }
 init();
