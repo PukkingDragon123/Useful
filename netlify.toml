@@ -1,0 +1,8 @@
+# Netlify config. Enables cross-origin isolation so background removal can use
+# multithreaded WASM. (Cloudflare Pages uses the _headers file instead.)
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "require-corp"
+    Cross-Origin-Resource-Policy = "cross-origin"

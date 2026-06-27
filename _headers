@@ -1,0 +1,8 @@
+# Cross-origin isolation enables SharedArrayBuffer, which lets the background
+# removal engine run multithreaded WASM (much faster). Honoured by hosts that
+# support a _headers file (Cloudflare Pages, Netlify). Plain GitHub Pages
+# ignores this file — the app still works, just single-threaded.
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  Cross-Origin-Resource-Policy: cross-origin

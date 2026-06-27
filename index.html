@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f1020" />
+    <title>Pukking's Useful Tools — Sprite Splitter & BG Remover</title>
+    <meta
+      name="description"
+      content="Split Pinterest sprite sheets into individual images with smart auto-detect, remove backgrounds in your browser, and save everything straight to your Files app. 100% private — nothing is uploaded."
+    />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9C%82%EF%B8%8F%3C/text%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="appbar">
+      <div class="appbar__brand">
+        <span class="appbar__logo" aria-hidden="true">🧰</span>
+        <div>
+          <h1 class="appbar__title">Pukking's Useful Tools</h1>
+          <p class="appbar__tag">Sprite-sheet splitter · background remover · save to Files</p>
+        </div>
+      </div>
+      <nav class="tabs" role="tablist" aria-label="Tools">
+        <button class="tab is-active" role="tab" data-tab="splitter" aria-selected="true">
+          <span aria-hidden="true">✂️</span> Splitter
+        </button>
+        <button class="tab" role="tab" data-tab="bg" aria-selected="false">
+          <span aria-hidden="true">🪄</span> BG Remover
+        </button>
+        <button class="tab" role="tab" data-tab="pin" aria-selected="false">
+          <span aria-hidden="true">📌</span> Find on Pinterest
+        </button>
+      </nav>
+    </header>
+
+    <main class="main">
+      <!-- ============================ SPLITTER ============================ -->
+      <section id="tab-splitter" class="panel is-active" role="tabpanel">
+        <div id="splitter-intro" class="intro">
+          <div id="splitter-drop" class="dropzone" tabindex="0">
+            <input id="splitter-file" type="file" accept="image/*" hidden />
+            <div class="dropzone__icon" aria-hidden="true">🖼️</div>
+            <p class="dropzone__title">Drop a sprite sheet here</p>
+            <p class="dropzone__hint">or tap to upload · paste from clipboard · drag &amp; drop</p>
+            <div class="dropzone__actions">
+              <button class="btn btn--primary no-pick" id="splitter-upload">Choose image</button>
+              <button class="btn btn--ghost no-pick" id="splitter-demo">Try an example</button>
+            </div>
+          </div>
+          <ul class="feature-list">
+            <li><b>Smart Auto-Detect</b> finds every sprite for you — no guessing.</li>
+            <li><b>Grid mode</b> for evenly-spaced sheets, with one-tap auto-guess.</li>
+            <li><b>Remove backgrounds</b> right here, then <b>Save all to Files</b> as a ZIP.</li>
+          </ul>
+        </div>
+
+        <div id="splitter-workspace" class="workspace" hidden>
+          <div class="workspace__canvas">
+            <div class="canvas-wrap" id="splitter-canvas-wrap">
+              <canvas id="splitter-preview"></canvas>
+            </div>
+            <div class="canvas-meta">
+              <span id="splitter-dims" class="muted"></span>
+              <span id="splitter-count" class="pill">0 sprites</span>
+            </div>
+          </div>
+
+          <aside class="workspace__controls">
+            <div class="seg" role="group" aria-label="Detection mode">
+              <button class="seg__btn is-active" data-mode="auto">Auto ✨</button>
+              <button class="seg__btn" data-mode="grid">Grid</button>
+            </div>
+
+            <!-- AUTO controls -->
+            <div class="control-group" data-for="auto">
+              <label class="field">
+                <span>Sensitivity (alpha threshold) <output id="out-threshold">12</output></span>
+                <input id="ctl-threshold" type="range" min="1" max="200" value="12" />
+              </label>
+              <label class="field">
+                <span>Ignore specks smaller than <output id="out-minarea">24</output> px²</span>
+                <input id="ctl-minarea" type="range" min="1" max="2000" value="24" />
+              </label>
+              <label class="field">
+                <span>Merge pieces within <output id="out-merge">0</output> px gap</span>
+                <input id="ctl-merge" type="range" min="0" max="40" value="0" />
+              </label>
+              <label class="check">
+                <input id="ctl-diag" type="checkbox" checked />
+                <span>Connect diagonal pixels</span>
+              </label>
+            </div>
+
+            <!-- GRID controls -->
+            <div class="control-group" data-for="grid" hidden>
+              <div class="seg seg--sm" role="group" aria-label="Grid input">
+                <button class="seg__btn is-active" data-grid="count">By rows × cols</button>
+                <button class="seg__btn" data-grid="size">By cell size</button>
+              </div>
+              <div class="grid-rowcols" data-grid-input="count">
+                <label class="field field--inline"><span>Columns</span><input id="ctl-cols" type="number" min="1" value="4" /></label>
+                <label class="field field--inline"><span>Rows</span><input id="ctl-rows" type="number" min="1" value="4" /></label>
+              </div>
+              <div class="grid-cellsize" data-grid-input="size" hidden>
+                <label class="field field--inline"><span>Cell W</span><input id="ctl-cellw" type="number" min="1" value="64" /></label>
+                <label class="field field--inline"><span>Cell H</span><input id="ctl-cellh" type="number" min="1" value="64" /></label>
+              </div>
+              <div class="grid-rowcols">
+                <label class="field field--inline"><span>Margin</span><input id="ctl-margin" type="number" min="0" value="0" /></label>
+                <label class="field field--inline"><span>Spacing</span><input id="ctl-spacing" type="number" min="0" value="0" /></label>
+              </div>
+              <button class="btn btn--ghost btn--block" id="ctl-guess">✨ Auto-guess grid</button>
+            </div>
+
+            <hr class="rule" />
+
+            <details class="adv" open>
+              <summary>Output options</summary>
+              <label class="check"><input id="ctl-trim" type="checkbox" checked /><span>Trim transparent border</span></label>
+              <label class="field field--inline"><span>Padding</span><input id="ctl-pad" type="number" min="0" value="0" /></label>
+              <label class="check"><input id="ctl-uniform" type="checkbox" /><span>Pad all to same size</span></label>
+            </details>
+
+            <hr class="rule" />
+
+            <button class="btn btn--block" id="splitter-removebg">🪄 Remove background from sheet first</button>
+            <p class="status" id="splitter-bg-status" hidden></p>
+
+            <button class="btn btn--ghost btn--block" id="splitter-change">Change image</button>
+          </aside>
+        </div>
+
+        <div id="splitter-results" class="results" hidden>
+          <div class="results__bar">
+            <strong id="results-count">0 selected</strong>
+            <div class="results__actions">
+              <button class="btn btn--ghost btn--sm" id="results-selectall">Select all</button>
+              <button class="btn btn--ghost btn--sm" id="results-none">Clear</button>
+              <button class="btn btn--ghost btn--sm" id="results-removebg">🪄 Remove BG (selected)</button>
+              <button class="btn btn--primary btn--sm" id="results-save">📥 Save all to Files</button>
+            </div>
+          </div>
+          <div id="results-grid" class="card-grid"></div>
+        </div>
+      </section>
+
+      <!-- ============================ BG REMOVER ============================ -->
+      <section id="tab-bg" class="panel" role="tabpanel" hidden>
+        <div class="intro">
+          <div id="bg-drop" class="dropzone" tabindex="0">
+            <input id="bg-file" type="file" accept="image/*" multiple hidden />
+            <div class="dropzone__icon" aria-hidden="true">🪄</div>
+            <p class="dropzone__title">Drop images to remove their backgrounds</p>
+            <p class="dropzone__hint">tap to upload · paste · drag &amp; drop — many at once is fine</p>
+            <div class="dropzone__actions">
+              <button class="btn btn--primary no-pick" id="bg-upload">Choose images</button>
+            </div>
+          </div>
+          <label class="field field--inline model-field">
+            <span>Model</span>
+            <select id="bg-model"></select>
+          </label>
+          <p class="muted small" id="bg-engine-note"></p>
+        </div>
+
+        <div id="bg-results" class="results" hidden>
+          <div class="results__bar">
+            <strong id="bg-count">0 images</strong>
+            <div class="results__actions">
+              <button class="btn btn--sm" id="bg-runall">🪄 Remove all backgrounds</button>
+              <button class="btn btn--primary btn--sm" id="bg-save">📥 Save all to Files</button>
+              <button class="btn btn--ghost btn--sm" id="bg-clear">Clear</button>
+            </div>
+          </div>
+          <div id="bg-list" class="card-grid card-grid--wide"></div>
+        </div>
+      </section>
+
+      <!-- ============================ PINTEREST ============================ -->
+      <section id="tab-pin" class="panel" role="tabpanel" hidden>
+        <div class="finder">
+          <h2 class="finder__h">Find images on Pinterest</h2>
+          <p class="muted">
+            Search Pinterest in a new tab, then bring the image back here to split or cut out.
+            Everything you edit stays on your device.
+          </p>
+          <div class="search">
+            <input id="pin-query" type="search" placeholder="e.g. cute cat stickers, pixel art icons…" autocomplete="off" />
+            <button class="btn btn--primary" id="pin-search">Search Pinterest ↗</button>
+          </div>
+          <div id="pin-suggestions" class="chips"></div>
+
+          <hr class="rule" />
+
+          <h3 class="finder__sub">Bring an image here</h3>
+          <div id="pin-drop" class="dropzone dropzone--sm" tabindex="0">
+            <input id="pin-file" type="file" accept="image/*" hidden />
+            <p class="dropzone__title">Upload, paste, or drag an image</p>
+            <p class="dropzone__hint">This always works and keeps full quality.</p>
+          </div>
+          <div class="url-row">
+            <input id="pin-url" type="url" placeholder="…or paste an image URL (best-effort)" autocomplete="off" />
+            <button class="btn btn--ghost" id="pin-load">Load URL</button>
+          </div>
+          <p class="status" id="pin-status" hidden></p>
+
+          <div id="pin-preview" class="pin-preview" hidden>
+            <div class="canvas-wrap canvas-wrap--sm"><canvas id="pin-canvas"></canvas></div>
+            <div class="pin-preview__actions">
+              <button class="btn btn--primary" id="pin-to-splitter">✂️ Send to Splitter</button>
+              <button class="btn" id="pin-to-bg">🪄 Send to BG Remover</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>
+        🔒 100% private — all processing happens in your browser, nothing is uploaded.
+        <span id="coi-note" class="muted"></span>
+      </p>
+      <p class="muted small">
+        Background removal by
+        <a href="https://github.com/imgly/background-removal-js" target="_blank" rel="noopener">@imgly/background-removal</a>
+        (AGPL-3.0) · zip via JSZip · Made for Pukking.
+      </p>
+    </footer>
+
+    <script type="module" src="./js/app.js"></script>
+  </body>
+</html>
