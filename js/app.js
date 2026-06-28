@@ -2,7 +2,7 @@
 import { $, $$, el, toast, blobToImage, imageToCanvas, canvasToBlob, isCanvasTainted,
   formatBytes, debounce, pad, setupImageInput, imageFilesFrom } from './util.js';
 import * as SPL from './splitter.js';
-import { removeBackground, MODELS, hasWebGPU, isCrossOriginIsolated } from './bgremove.js';
+import { removeBackground, MODELS, isCrossOriginIsolated } from './bgremove.js';
 import { saveAll, buildZip, downloadBlob } from './exporter.js';
 import { makeDemoSheet } from './demo.js';
 import { openPinterestSearch, suggestQueries, loadRemoteImage } from './pinterest.js';
@@ -32,7 +32,7 @@ function hideOverlay() { overlay.hidden = true; }
 function bgProgress(label) {
   return (key, current, total) => {
     if (total) {
-      const phase = String(key).startsWith('fetch') ? 'Downloading model' : 'Processing';
+      const phase = String(key).startsWith('fetch') ? 'Downloading AI model (one-time)' : 'Removing background';
       setOverlayProgress(`${label} — ${phase} ${Math.round((current / total) * 100)}%`, current / total);
     } else {
       setOverlayProgress(label);
@@ -364,11 +364,14 @@ $$('.seg__btn[data-mode]').forEach((btn) => btn.addEventListener('click', () => 
 }));
 
 // grid input toggle
+function setGridInput(mode) {
+  SP.gridInput = mode;
+  $$('.seg__btn[data-grid]').forEach((b) => b.classList.toggle('is-active', b.dataset.grid === mode));
+  $('[data-grid-input="count"]').hidden = mode !== 'count';
+  $('[data-grid-input="size"]').hidden = mode !== 'size';
+}
 $$('.seg__btn[data-grid]').forEach((btn) => btn.addEventListener('click', () => {
-  $$('.seg__btn[data-grid]').forEach((b) => b.classList.toggle('is-active', b === btn));
-  SP.gridInput = btn.dataset.grid;
-  $('[data-grid-input="count"]').hidden = SP.gridInput !== 'count';
-  $('[data-grid-input="size"]').hidden = SP.gridInput !== 'size';
+  setGridInput(btn.dataset.grid);
   refreshDetection();
   setTimeout(buildResults, 160);
 }));
@@ -393,20 +396,28 @@ liveControls.forEach(([input, out]) => {
   $(sel).addEventListener('change', () => setTimeout(buildResults, 30));
 });
 
-// auto-guess grid
+// auto-guess grid: detect how many rows/columns of sprites there are, then
+// divide the sheet evenly into that many cells. This is much more reliable
+// than trying to recover exact pixel margins/spacing (which conflates the
+// transparent padding inside a cell with the gutter between cells).
 $('#ctl-guess').addEventListener('click', () => {
   if (!SP.src) return;
   const { data, W, H } = ensureImageData();
   const bg = SPL.detectBackgroundColor(data, W, H);
   const mask = SPL.buildMask(data, W, H, { threshold: readControls().threshold, bg });
   const guess = SPL.autoGuessGrid(mask, W, H);
-  if (!guess) { toast('Couldn’t detect a regular grid. Try Auto mode instead.', 'warn', 4500); return; }
-  $('#ctl-cols').value = guess.cols; $('#ctl-rows').value = guess.rows;
-  $('#ctl-cellw').value = guess.cellW; $('#ctl-cellh').value = guess.cellH;
-  $('#ctl-margin').value = guess.margin; $('#ctl-spacing').value = guess.spacing;
+  if (!guess) {
+    toast('Couldn’t find a regular grid (sprites may be touching). Use Auto mode, or set rows × columns yourself.', 'warn', 5500);
+    return;
+  }
+  setGridInput('count');
+  $('#ctl-cols').value = guess.cols;
+  $('#ctl-rows').value = guess.rows;
+  $('#ctl-margin').value = 0;
+  $('#ctl-spacing').value = 0;
   refreshDetection();
   setTimeout(buildResults, 160);
-  toast(`Guessed ${guess.cols} × ${guess.rows} grid.`, 'good');
+  toast(`Detected a ${guess.cols} × ${guess.rows} grid. Adjust rows/columns if it’s off, and keep "Trim" on.`, 'good', 5000);
 });
 
 // remove bg from whole sheet first
@@ -689,9 +700,8 @@ function init() {
   MODELS.forEach((m) => sel.append(el('option', { value: m.id, text: m.label })));
   sel.value = 'isnet_fp16';
   // engine note
-  const gpu = hasWebGPU();
   $('#bg-engine-note').textContent =
-    `Runs entirely in your browser. ${gpu ? 'WebGPU acceleration available.' : 'Using CPU (WebGPU not detected).'} First use downloads the model once (~40–80MB).`;
+    'Runs entirely on your device — the first removal downloads the AI model once (~40–80MB) and may take up to a minute on a phone. After that it’s fast and works offline.';
   // cross-origin isolation note
   const coi = $('#coi-note');
   coi.textContent = isCrossOriginIsolated()

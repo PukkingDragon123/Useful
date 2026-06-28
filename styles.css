@@ -18,6 +18,10 @@
 }
 
 * { box-sizing: border-box; }
+/* The [hidden] attribute must win over component display rules (.intro,
+   .workspace, .control-group, etc. set display:grid/flex, which would
+   otherwise override the UA `display:none` and leave hidden panels visible). */
+[hidden] { display: none !important; }
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
@@ -122,6 +126,29 @@ input[type="range"] { width: 100%; accent-color: var(--accent-2); }
 .status--good { color: var(--good); }
 .status--warn { color: var(--warn); }
 .status--err { color: var(--accent-2); }
+
+/* ---------- Help / instructions ---------- */
+.help {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+}
+.help summary {
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 0.95rem;
+  list-style: none;
+}
+.help summary::-webkit-details-marker { display: none; }
+.help summary::after { content: '▸'; float: right; color: var(--muted); transition: 0.2s; }
+.help[open] summary::after { transform: rotate(90deg); }
+.help[open] summary { margin-bottom: 8px; }
+.help ol { margin: 0; padding-left: 1.3em; display: grid; gap: 7px; }
+.help li { font-size: 0.9rem; color: var(--muted); }
+.help li b { color: var(--text); }
+.help p { margin: 10px 0 0; }
 
 /* ---------- Dropzone / intro ---------- */
 .intro { display: grid; gap: 18px; }

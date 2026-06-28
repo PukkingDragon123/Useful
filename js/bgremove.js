@@ -35,7 +35,7 @@ export async function loadEngine(onStatus) {
   if (_engine) return _engine;
   if (_loading) return _loading;
   _loading = (async () => {
-    onStatus?.('Loading background-removal engine…');
+    onStatus?.('Loading the AI engine (first run downloads a model, ~40–80MB — it’s cached after that)…');
     let mod;
     try {
       mod = await importFirst(ENGINE_URLS);
@@ -63,12 +63,11 @@ export async function loadEngine(onStatus) {
  * @returns {Promise<Blob>} PNG blob with a transparent background.
  */
 export async function removeBackground(input, opts = {}) {
-  const { model = 'isnet_fp16', device, onProgress, onStatus } = opts;
+  const { model = 'isnet_fp16', device = 'cpu', onProgress, onStatus } = opts;
   const engine = await loadEngine(onStatus);
-  const useDevice = device || (hasWebGPU() ? 'gpu' : 'cpu');
 
   const config = {
-    device: useDevice,
+    device,
     model,
     output: { format: 'image/png' },
     progress: (key, current, total) => onProgress?.(key, current, total),
@@ -77,9 +76,11 @@ export async function removeBackground(input, opts = {}) {
   try {
     return await engine(input, config);
   } catch (err) {
-    // WebGPU can fail unpredictably on some devices — retry once on CPU.
-    if (useDevice === 'gpu') {
-      onStatus?.('GPU path failed, retrying on CPU…');
+    // If someone opted into the (sometimes flaky) WebGPU path and it failed,
+    // retry once on the reliable CPU path. CPU is the default, so normally
+    // this just rethrows a clear error.
+    if (device === 'gpu') {
+      onStatus?.('GPU path failed — retrying on CPU…');
       return engine(input, { ...config, device: 'cpu' });
     }
     throw err;

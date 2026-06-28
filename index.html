@@ -37,6 +37,16 @@
     <main class="main">
       <!-- ============================ SPLITTER ============================ -->
       <section id="tab-splitter" class="panel is-active" role="tabpanel">
+        <details class="help">
+          <summary>ℹ️ How to use the Splitter</summary>
+          <ol>
+            <li><b>Add a sprite sheet</b> — tap <b>Choose image</b>, or drag / paste one in. (Tap <b>Try an example</b> to test it right now.)</li>
+            <li><b>Auto ✨</b> finds each sprite for you. Detected sprites are outlined in red on the preview. If it grabs too much or splits one sprite into pieces, drag <b>Sensitivity</b>; raise <b>Ignore specks</b> to drop tiny bits; raise <b>Merge pieces</b> to join a sprite that broke apart.</li>
+            <li><b>Sprites in a neat grid (or touching)?</b> Switch to <b>Grid</b>, tap <b>✨ Auto-guess grid</b>, or just type the <b>rows × columns</b> yourself. Keep <b>Trim</b> on for tight cut-outs.</li>
+            <li><b>Want transparent cut-outs?</b> Tap <b>🪄 Remove background from sheet first</b>, or 🪄 on any single sprite below.</li>
+            <li><b>Tap 📥 Save all to Files</b> — you get one ZIP of every selected sprite. On iPhone, choose <b>Save to Files</b> in the share sheet.</li>
+          </ol>
+        </details>
         <div id="splitter-intro" class="intro">
           <div id="splitter-drop" class="dropzone" tabindex="0">
             <input id="splitter-file" type="file" accept="image/*" hidden />
@@ -147,6 +157,15 @@
 
       <!-- ============================ BG REMOVER ============================ -->
       <section id="tab-bg" class="panel" role="tabpanel" hidden>
+        <details class="help">
+          <summary>ℹ️ How to use the Background Remover</summary>
+          <ol>
+            <li><b>Add one or more images</b> — tap, drag, or paste.</li>
+            <li><b>Tap 🪄 Remove all backgrounds.</b> ⏳ <b>The first time only</b>, it downloads the AI model (~40–80MB) — this can take up to a minute, especially on a phone. A progress bar shows what it’s doing — it isn’t frozen. After that it’s fast and works offline.</li>
+            <li><b>Check the before / after</b> on each card, then tap <b>📥 Save all to Files</b>.</li>
+          </ol>
+          <p class="muted small">It’s an AI model, so tricky edges (hair, glass) won’t always be perfect. Clear subjects work best.</p>
+        </details>
         <div class="intro">
           <div id="bg-drop" class="dropzone" tabindex="0">
             <input id="bg-file" type="file" accept="image/*" multiple hidden />
@@ -179,6 +198,16 @@
 
       <!-- ============================ PINTEREST ============================ -->
       <section id="tab-pin" class="panel" role="tabpanel" hidden>
+        <details class="help">
+          <summary>ℹ️ How to use the Pinterest finder</summary>
+          <ol>
+            <li><b>Type what you want</b> and tap <b>Search Pinterest ↗</b> — it opens Pinterest in a new tab. Tap a suggestion chip for ideas.</li>
+            <li>On Pinterest, <b>save or screenshot</b> the image you like.</li>
+            <li>Come back and <b>upload / paste / drag it in</b> below. (Pasting an image URL is best-effort — if it’s blocked, just save the image and upload it.)</li>
+            <li>Then tap <b>✂️ Send to Splitter</b> or <b>🪄 Send to BG Remover</b>.</li>
+          </ol>
+          <p class="muted small">Pinterest doesn’t allow apps to search it directly, so this opens their site for you — your edits always stay on your device.</p>
+        </details>
         <div class="finder">
           <h2 class="finder__h">Find images on Pinterest</h2>
           <p class="muted">
